@@ -8,12 +8,56 @@ document.addEventListener("DOMContentLoaded", () => {
   initBannersTab();
   initSettingsTab();
 
-  // Add Firebase loaded listener for initial sync and realtime orders
-  window.addEventListener("firebaseReady", () => {
+  const startFirebase = () => {
     listenForOrders();
-    syncAllDataFromFirestore(); // سحب البيانات من فايربيس عند تحميل الصفحة
-  });
+    syncAllDataFromFirestore();
+  };
+
+  if (window.db && window.firestore) {
+    startFirebase();
+  } else {
+    window.addEventListener("firebaseReady", startFirebase);
+  }
 });
+
+// ------------------------------------
+// دالة الرفع الاحترافية إلى Bunny.net
+// ------------------------------------
+async function uploadToBunnyNET(file) {
+  const storageZoneName = "basm";
+  const accessKey = "8b38dd52-babf-4828-b0d216172735-6a18-4706";
+  const pullZoneUrl = "https://basm.b-cdn.net";
+
+  // توليد اسم فريد للصورة باستخدام الوقت الحالي لمنع تداخل الأسماء
+  const uniqueFileName = Date.now() + "-" + file.name.replace(/[^a-zA-Z0-9.]/g, "");
+  const uploadUrl = `https://storage.bunnycdn.com/${storageZoneName}/${uniqueFileName}`;
+
+  try {
+    const response = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        "AccessKey": accessKey,
+        "Content-Type": "application/octet-stream",
+      },
+      body: file,
+    });
+
+    if (response.ok) {
+      // إرجاع الرابط المباشر الجاهز للاستخدام في المتجر
+      return `${pullZoneUrl}/${uniqueFileName}`;
+    } else {
+      console.error("خطأ في الرفع إلى Bunny.net:", response.statusText);
+      return null;
+    }
+  } catch (error) {
+    console.error("فشل الاتصال بخادم Bunny.net:", error);
+    return null;
+  }
+}
+
+// ------------------------------------
+// عمليات Firebase اللحظية والمزامنة
+// ------------------------------------
 
 async function updateAdminCacheVersion() {
   if (window.db && window.firestore) {
@@ -24,7 +68,6 @@ async function updateAdminCacheVersion() {
           updatedAt: window.firestore.serverTimestamp(),
         },
       );
-      console.log("Firebase cache version updated");
     } catch (e) {
       console.error("Error updating meta version:", e);
     }
@@ -44,7 +87,6 @@ async function syncItemToFirestore(collectionName, itemData, action) {
             ),
           );
         } else {
-          // Fallback to local id string if no firestoreId
           const querySnap = await window.firestore.getDocs(
             window.firestore.collection(window.db, collectionName),
           );
@@ -83,14 +125,7 @@ async function syncItemToFirestore(collectionName, itemData, action) {
       await updateAdminCacheVersion();
     } catch (e) {
       console.error(`Firebase error on ${collectionName}:`, e);
-      console.error(
-        `حصل خطأ في حفظ ${collectionName} في فايربيس (قد تكون قواعد البيانات Rules تمنع الكتابة): ${e.message}`,
-      );
     }
-  } else {
-    console.warn(
-      "لم يتم تجهيز فايربيس بعد. الرجاء الانتظار بضع ثوان والمحاولة مرة أخرى.",
-    );
   }
 }
 
@@ -103,7 +138,6 @@ function listenForOrders() {
         snapshot.forEach((doc) => {
           firestoreOrders.push({ firestoreId: doc.id, ...doc.data() });
         });
-        // Merge or assign to pending based on status
         const pendingOrders = firestoreOrders.filter(
           (o) => o.status === "pending",
         );
@@ -119,11 +153,9 @@ function listenForOrders() {
   }
 }
 
-// دالة جديدة لسحب البيانات الفعلية من فايربيس وتحديث اللوحة بها
 async function syncAllDataFromFirestore() {
   if (window.db && window.firestore) {
     try {
-      // سحب المنتجات
       const productsSnap = await window.firestore.getDocs(window.firestore.collection(window.db, "products"));
       let fetchedProducts = [];
       productsSnap.forEach((doc) => {
@@ -131,7 +163,6 @@ async function syncAllDataFromFirestore() {
       });
       localStorage.setItem("products", JSON.stringify(fetchedProducts));
 
-      // سحب الفئات
       const categoriesSnap = await window.firestore.getDocs(window.firestore.collection(window.db, "categories"));
       let fetchedCategories = [];
       categoriesSnap.forEach((doc) => {
@@ -139,7 +170,6 @@ async function syncAllDataFromFirestore() {
       });
       localStorage.setItem("categories", JSON.stringify(fetchedCategories));
 
-      // سحب البنرات
       if (window.firestore.getDoc) {
         const bannersDoc = await window.firestore.getDoc(window.firestore.doc(window.db, "meta", "banners"));
         if (bannersDoc.exists && bannersDoc.exists()) {
@@ -147,17 +177,19 @@ async function syncAllDataFromFirestore() {
         }
       }
 
-      // تحديث العرض
       populateCategorySelects();
       loadAdminProducts();
       loadAdminCategories();
       loadAdminBanners();
-      console.log("تم سحب البيانات من فايربيس بنجاح");
     } catch (e) {
       console.error("Error syncing data from Firestore:", e);
     }
   }
 }
+
+// ------------------------------------
+// وظائف واجهة المستخدم للآدمن
+// ------------------------------------
 
 function initTabs() {
   const tabs = document.querySelectorAll(".sidebar-menu li");
@@ -166,21 +198,17 @@ function initTabs() {
 
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
-      // إزالة التفعيل من جميع التبويبات
       tabs.forEach((t) => t.classList.remove("active"));
       contents.forEach((c) => c.classList.remove("active"));
 
-      // إضافة التفعيل للتبويب المحدد
       tab.classList.add("active");
       const targetId = tab.dataset.tab + "-tab";
       document.getElementById(targetId).classList.add("active");
 
-      // تحديث عنوان الصفحة
       if (headerTitle) {
         headerTitle.innerText = tab.innerText;
       }
 
-      // إغلاق القائمة الجانبية في الموبايل عند التحديد
       const sidebar = document.getElementById("sidebar");
       if (window.innerWidth <= 768 && sidebar) {
         sidebar.classList.remove("open");
@@ -207,9 +235,7 @@ function loadOrders() {
   let pendingOrders = [];
   try {
     pendingOrders = JSON.parse(localStorage.getItem("pendingOrders") || "[]");
-  } catch (e) {
-    console.error("خطأ في قراءة الطلبات", e);
-  }
+  } catch (e) {}
 
   if (pendingOrders.length === 0) {
     container.innerHTML =
@@ -217,25 +243,15 @@ function loadOrders() {
     return;
   }
 
-  // ترتيب الطلبات من الأحدث للأقدم
   pendingOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
-
   container.innerHTML = "";
 
-  // جلب بيانات العميل (مؤقتاً من الكاش، في التطبيق الحقيقي تخزن مع الطلب)
   const cName = localStorage.getItem("checkoutName") || "غير مدخل";
   const cAddress = localStorage.getItem("checkoutAddress") || "غير مدخل";
   const cPhone = localStorage.getItem("checkoutPhone") || "غير مدخل";
   const shippingFee = 3000;
 
-  const colors = [
-    "#e0f2fe",
-    "#dcfce7",
-    "#fef3c7",
-    "#fee2e2",
-    "#f3e8ff",
-    "#ffedd5",
-  ];
+  const colors = ["#e0f2fe", "#dcfce7", "#fef3c7", "#fee2e2", "#f3e8ff", "#ffedd5"];
 
   pendingOrders.forEach((order, index) => {
     const orderDateObj = new Date(order.date);
@@ -270,9 +286,9 @@ function loadOrders() {
                 <span class="order-date">${orderDate}</span>
             </div>
             <div class="order-customer">
-                <div><strong>الاسم:</strong> ${cName}</div>
-                <div><strong>العنوان:</strong> ${cAddress}</div>
-                <div><strong>الهاتف:</strong> <span dir="ltr">${cPhone}</span></div>
+                <div><strong>الاسم:</strong> ${order.customerName || cName}</div>
+                <div><strong>العنوان:</strong> ${order.customerAddress || cAddress}</div>
+                <div><strong>الهاتف:</strong> <span dir="ltr">${order.customerPhone || cPhone}</span></div>
             </div>
             <div class="order-items">
                 ${itemsHtml}
@@ -336,7 +352,6 @@ window.processOrder = async function (id, action) {
     }
   }
 
-  // إعادة تحميل القائمة لمعاينة التغييرات
   loadOrders();
   if (typeof loadAcceptedOrders === "function") {
     loadAcceptedOrders();
@@ -350,9 +365,7 @@ function loadAcceptedOrders() {
   let acceptedOrders = [];
   try {
     acceptedOrders = JSON.parse(localStorage.getItem("acceptedOrders") || "[]");
-  } catch (e) {
-    console.error("خطأ في قراءة الطلبات المقبولة", e);
-  }
+  } catch (e) {}
 
   if (acceptedOrders.length === 0) {
     container.innerHTML =
@@ -360,9 +373,7 @@ function loadAcceptedOrders() {
     return;
   }
 
-  // ترتيب الطلبات من الأحدث للأقدم
   acceptedOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
-
   container.innerHTML = "";
 
   const cName = localStorage.getItem("checkoutName") || "غير مدخل";
@@ -403,9 +414,9 @@ function loadAcceptedOrders() {
                 <span class="order-date">${orderDate}</span>
             </div>
             <div class="order-customer">
-                <div><strong>الاسم:</strong> ${cName}</div>
-                <div><strong>العنوان:</strong> ${cAddress}</div>
-                <div><strong>الهاتف:</strong> <span dir="ltr">${cPhone}</span></div>
+                <div><strong>الاسم:</strong> ${order.customerName || cName}</div>
+                <div><strong>العنوان:</strong> ${order.customerAddress || cAddress}</div>
+                <div><strong>الهاتف:</strong> <span dir="ltr">${order.customerPhone || cPhone}</span></div>
             </div>
             <div class="order-items">
                 ${itemsHtml}
@@ -496,7 +507,8 @@ function initProductsTab() {
   }
 
   if (saveBtn) {
-    saveBtn.addEventListener("click", () => {
+    // تم تحويل هذه الدالة لتكون Async لكي تستخدم الرفع الجديد
+    saveBtn.addEventListener("click", async () => {
       const name = document.getElementById("new-product-name").value;
       const price = document.getElementById("new-product-price").value;
       const category = document.getElementById("new-product-category").value;
@@ -508,58 +520,54 @@ function initProductsTab() {
         return;
       }
 
-      saveBtn.innerText = "جاري الحفظ...";
+      saveBtn.innerText = "جاري رفع الصورة للمخدم...";
       saveBtn.disabled = true;
 
-      compressImageFile(imageFile, function (compressedBase64) {
-        try {
-          let products = [];
-          try {
-            const saved = localStorage.getItem("products");
-            if (saved) products = JSON.parse(saved);
-          } catch (e) {}
+      // استخدام الدالة الجديدة للرفع بدلاً من الضغط المحلي
+      const uploadedImageUrl = await uploadToBunnyNET(imageFile);
 
-          if (!products) {
-            products = [];
-          }
+      if (!uploadedImageUrl) {
+        alert("فشل رفع الصورة إلى المخدم. يرجى التأكد من الاتصال والمحاولة مجدداً.");
+        saveBtn.innerText = "حفظ المنتج";
+        saveBtn.disabled = false;
+        return;
+      }
 
-          const newId =
-            products.length > 0
-              ? Math.max(...products.map((p) => p.id)) + 1
-              : 1;
-          const formattedPrice =
-            parseInt(price).toLocaleString("en-US") + " د.ع";
+      try {
+        let products = JSON.parse(localStorage.getItem("products")) || [];
 
-          const newProduct = {
-            id: newId,
-            name: name,
-            price: formattedPrice,
-            image: compressedBase64,
-            rating: 5,
-            category: category,
-          };
+        const newId = products.length > 0 ? Math.max(...products.map((p) => p.id)) + 1 : 1;
+        const formattedPrice = parseInt(price).toLocaleString("en-US") + " د.ع";
 
-          products.push(newProduct);
-          localStorage.setItem("products", JSON.stringify(products));
-          syncItemToFirestore("products", newProduct, "add");
+        const newProduct = {
+          id: newId,
+          name: name,
+          price: formattedPrice,
+          image: uploadedImageUrl,
+          rating: 5,
+          category: category,
+        };
 
-          document.getElementById("new-product-name").value = "";
-          document.getElementById("new-product-price").value = "";
-          document.getElementById("new-product-image").value = "";
-          formContainer.style.display = "none";
-          addProductBtn.innerText = "إضافة منتج جديد";
-          addProductBtn.style.background = "#10b981";
+        products.push(newProduct);
+        localStorage.setItem("products", JSON.stringify(products));
+        syncItemToFirestore("products", newProduct, "add");
 
-          alert("تمت إضافة المنتج بنجاح!");
-          loadAdminProducts();
-        } catch (err) {
-          console.error(err);
-          alert("خطأ! مساحة التخزين ممتلئة.");
-        } finally {
-          saveBtn.innerText = "حفظ المنتج";
-          saveBtn.disabled = false;
-        }
-      });
+        document.getElementById("new-product-name").value = "";
+        document.getElementById("new-product-price").value = "";
+        document.getElementById("new-product-image").value = "";
+        formContainer.style.display = "none";
+        addProductBtn.innerText = "إضافة منتج جديد";
+        addProductBtn.style.background = "#10b981";
+
+        alert("تمت إضافة المنتج بنجاح!");
+        loadAdminProducts();
+      } catch (err) {
+        console.error(err);
+        alert("حدث خطأ غير متوقع!");
+      } finally {
+        saveBtn.innerText = "حفظ المنتج";
+        saveBtn.disabled = false;
+      }
     });
   }
 }
@@ -568,7 +576,6 @@ function loadAdminProducts() {
   const container = document.getElementById("admin-products-container");
   if (!container) return;
 
-  // Attach edit events once if not attached
   if (!window.editEventsAttached) {
     const cancelBtn = document.getElementById("cancel-edit-btn");
     const updateBtn = document.getElementById("update-product-btn");
@@ -580,7 +587,7 @@ function loadAdminProducts() {
     }
 
     if (updateBtn) {
-      updateBtn.addEventListener("click", () => {
+      updateBtn.addEventListener("click", async () => {
         const id = parseInt(document.getElementById("edit-product-id").value);
         const name = document.getElementById("edit-product-name").value;
         const price = document.getElementById("edit-product-price").value;
@@ -594,7 +601,6 @@ function loadAdminProducts() {
         }
 
         let products = JSON.parse(localStorage.getItem("products")) || [];
-
         const formattedPrice = parseInt(price).toLocaleString("en-US") + " د.ع";
         const index = products.findIndex((p) => p.id === id);
 
@@ -604,37 +610,29 @@ function loadAdminProducts() {
           products[index].category = category;
 
           if (imageFile) {
-            updateBtn.innerText = "جاري الحفظ...";
+            updateBtn.innerText = "جاري رفع الصورة وتحديث المنتج...";
             updateBtn.disabled = true;
-            compressImageFile(imageFile, function (compressedBase64) {
-              products[index].image = compressedBase64;
-              try {
-                localStorage.setItem("products", JSON.stringify(products));
-                syncItemToFirestore("products", products[index], "update");
-                document.getElementById("edit-product-form").style.display =
-                  "none";
-                loadAdminProducts();
-                alert("تم التعديل بنجاح!");
-              } catch (err) {
-                console.error(err);
-                alert("خطأ! مساحة التخزين ممتلئة.");
-              } finally {
-                updateBtn.innerText = "حفظ التعديلات";
-                updateBtn.disabled = false;
-              }
-            });
-          } else {
-            try {
-              localStorage.setItem("products", JSON.stringify(products));
-              syncItemToFirestore("products", products[index], "update");
-              document.getElementById("edit-product-form").style.display =
-                "none";
-              loadAdminProducts();
-              alert("تم التعديل بنجاح!");
-            } catch (err) {
-              console.error(err);
-              alert("خطأ! مساحة التخزين ممتلئة.");
+            
+            const uploadedImageUrl = await uploadToBunnyNET(imageFile);
+            if(uploadedImageUrl) {
+                products[index].image = uploadedImageUrl;
+            } else {
+                alert("فشل رفع الصورة الجديدة، سيتم الاحتفاظ بالصورة القديمة.");
             }
+          }
+
+          try {
+            localStorage.setItem("products", JSON.stringify(products));
+            syncItemToFirestore("products", products[index], "update");
+            document.getElementById("edit-product-form").style.display = "none";
+            loadAdminProducts();
+            alert("تم التعديل بنجاح!");
+          } catch (err) {
+            console.error(err);
+            alert("خطأ أثناء تحديث المنتج.");
+          } finally {
+            updateBtn.innerText = "حفظ التعديلات";
+            updateBtn.disabled = false;
           }
         }
       });
@@ -654,7 +652,7 @@ function loadAdminProducts() {
 
   products.forEach((product) => {
     const card = document.createElement("div");
-    card.className = "order-card"; // نستخدم نفس كارد ستايل الطلبات للاختصار والشكل الجميل
+    card.className = "order-card";
     card.innerHTML = `
             <div style="display:flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
                 <img src="${product.image}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px;">
@@ -732,45 +730,6 @@ window.editProduct = function (id) {
 // قسم إدارة البنرات
 // ------------------------------------
 
-function compressImageFile(file, callback) {
-  const reader = new FileReader();
-  reader.onload = function (e) {
-    const img = new Image();
-    img.onload = function () {
-      try {
-        const canvas = document.createElement("canvas");
-        let width = img.width;
-        let height = img.height;
-
-        const MAX_WIDTH = 1000;
-        if (width > MAX_WIDTH) {
-          height = Math.round((height * MAX_WIDTH) / width);
-          width = MAX_WIDTH;
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-
-        callback(canvas.toDataURL("image/jpeg", 0.6));
-      } catch (err) {
-        console.error("Compression error:", err);
-        callback(e.target.result); // fallback to original
-      }
-    };
-    img.onerror = function () {
-      callback(e.target.result);
-    };
-    img.src = e.target.result;
-  };
-  reader.onerror = function () {
-    alert("فشل في قراءة الصورة.");
-    callback(null);
-  };
-  reader.readAsDataURL(file);
-}
-
 function initBannersTab() {
   loadAdminBanners();
 
@@ -793,7 +752,7 @@ function initBannersTab() {
   }
 
   if (saveBtn) {
-    saveBtn.addEventListener("click", () => {
+    saveBtn.addEventListener("click", async () => {
       const imageInput = document.getElementById("new-banner-image");
       const imageFile = imageInput.files[0];
 
@@ -802,53 +761,46 @@ function initBannersTab() {
         return;
       }
 
-      saveBtn.innerText = "جاري الحفظ...";
+      saveBtn.innerText = "جاري رفع البنر...";
       saveBtn.disabled = true;
 
-      compressImageFile(imageFile, function (compressedBase64) {
-        if (!compressedBase64) {
-          saveBtn.innerText = "حفظ البنر";
-          saveBtn.disabled = false;
-          return;
+      const uploadedImageUrl = await uploadToBunnyNET(imageFile);
+
+      if (!uploadedImageUrl) {
+        alert("فشل رفع البنر إلى المخدم.");
+        saveBtn.innerText = "حفظ البنر";
+        saveBtn.disabled = false;
+        return;
+      }
+
+      try {
+        let banners = JSON.parse(localStorage.getItem("banners")) || [];
+        banners.push(uploadedImageUrl);
+        localStorage.setItem("banners", JSON.stringify(banners));
+
+        if (window.db && window.firestore) {
+          window.firestore
+            .setDoc(window.firestore.doc(window.db, "meta", "banners"), {
+              data: banners,
+            })
+            .then(() => updateAdminCacheVersion())
+            .catch((e) => console.error("Error saving banners:", e));
         }
-        try {
-          let banners = [];
-          const saved = localStorage.getItem("banners");
-          if (saved) {
-            banners = JSON.parse(saved);
-          } else {
-            banners = [];
-          }
 
-          banners.push(compressedBase64);
-          localStorage.setItem("banners", JSON.stringify(banners));
+        document.getElementById("new-banner-image").value = "";
+        formContainer.style.display = "none";
+        addBannerBtn.innerText = "إضافة بنر جديد";
+        addBannerBtn.style.background = "#10b981";
 
-          if (window.db && window.firestore) {
-            window.firestore
-              .setDoc(window.firestore.doc(window.db, "meta", "banners"), {
-                data: banners,
-              })
-              .then(() => updateAdminCacheVersion())
-              .catch((e) => console.error("Error saving banners:", e));
-          }
-
-          document.getElementById("new-banner-image").value = "";
-          formContainer.style.display = "none";
-          addBannerBtn.innerText = "إضافة بنر جديد";
-          addBannerBtn.style.background = "#10b981";
-
-          alert("تمت إضافة البنر بنجاح!");
-          loadAdminBanners();
-        } catch (error) {
-          console.error(error);
-          alert(
-            "خطأ أثناء الحفظ! مساحة التخزين ممتلئة. حاول حذف بعض البنرات القديمة أو المنتجات.",
-          );
-        } finally {
-          saveBtn.innerText = "حفظ البنر";
-          saveBtn.disabled = false;
-        }
-      });
+        alert("تمت إضافة البنر بنجاح!");
+        loadAdminBanners();
+      } catch (error) {
+        console.error(error);
+        alert("خطأ أثناء الحفظ!");
+      } finally {
+        saveBtn.innerText = "حفظ البنر";
+        saveBtn.disabled = false;
+      }
     });
   }
 }
@@ -857,21 +809,9 @@ function loadAdminBanners() {
   const container = document.getElementById("admin-banners-container");
   if (!container) return;
 
-  let banners = [];
-  const saved = localStorage.getItem("banners");
-  if (saved) {
-    try {
-      banners = JSON.parse(saved);
-    } catch (e) {
-      banners = [];
-    }
-  } else {
-    banners = [];
-  }
-
+  let banners = JSON.parse(localStorage.getItem("banners")) || [];
   container.innerHTML = "";
 
-  // Check if banners count is now really 0 (if user manually emptied the fallback)
   if (banners.length === 0) {
     container.innerHTML =
       '<div style="text-align:center; padding: 3rem; color:var(--text-muted);">لا توجد بنرات حالياً.</div>';
@@ -901,8 +841,6 @@ function loadAdminBanners() {
       const index = parseInt(e.currentTarget.getAttribute("data-index"));
       if (typeof window.deleteBanner === "function") {
         window.deleteBanner(index);
-      } else {
-        alert("خطأ: دالة الحذف غير موجودة!");
       }
     });
   });
@@ -910,46 +848,30 @@ function loadAdminBanners() {
 
 window.deleteBanner = function (index) {
   try {
-    let banners = [];
-    const saved = localStorage.getItem("banners");
-    if (saved) {
-      try {
-        banners = JSON.parse(saved);
-      } catch (e) {
-        banners = [];
-      }
-    } else {
-      banners = [];
-    }
+    let banners = JSON.parse(localStorage.getItem("banners")) || [];
 
     if (index >= 0 && index < banners.length) {
       banners.splice(index, 1);
-      try {
-        // نستخدم [] للحفظ إذا تم حذف كل البنرات عشان ميرجعوش الافتراضيين
-        localStorage.setItem("banners", JSON.stringify(banners));
-        if (window.db && window.firestore) {
-          window.firestore
-            .setDoc(window.firestore.doc(window.db, "meta", "banners"), {
-              data: banners,
-            })
-            .then(() => updateAdminCacheVersion())
-            .catch((e) => console.error("Error saving banners:", e));
-        }
-      } catch (e) {
-        console.error(e);
-        alert("خطأ أثناء تحديث المساحة كأنها ممتلئة! التفاصيل: " + e.message);
-        return;
+      localStorage.setItem("banners", JSON.stringify(banners));
+      if (window.db && window.firestore) {
+        window.firestore
+          .setDoc(window.firestore.doc(window.db, "meta", "banners"), {
+            data: banners,
+          })
+          .then(() => updateAdminCacheVersion())
+          .catch((e) => console.error("Error saving banners:", e));
       }
     }
-
     loadAdminBanners();
   } catch (error) {
-    alert("خطأ أثناء الحذف: " + error.message);
-    console.error(error);
+    console.error("خطأ أثناء الحذف: ", error);
   }
 };
 
-// Categories functions
+// ------------------------------------
+// قسم الفئات
+// ------------------------------------
+
 function initCategoriesTab() {
   const addCategoryBtn = document.getElementById("add-category-btn");
   const addCategoryForm = document.getElementById("add-category-form");
@@ -959,9 +881,7 @@ function initCategoriesTab() {
     addCategoryBtn.addEventListener("click", () => {
       const isVisible = addCategoryForm.style.display === "block";
       addCategoryForm.style.display = isVisible ? "none" : "block";
-      addCategoryBtn.innerText = isVisible
-        ? "إضافة فئة جديدة"
-        : "إلغاء الإضافة";
+      addCategoryBtn.innerText = isVisible ? "إضافة فئة جديدة" : "إلغاء الإضافة";
       if (!isVisible) {
         document.getElementById("edit-category-form").style.display = "none";
       }
@@ -969,7 +889,7 @@ function initCategoriesTab() {
   }
 
   if (saveCategoryBtn) {
-    saveCategoryBtn.addEventListener("click", () => {
+    saveCategoryBtn.addEventListener("click", async () => {
       const name = document.getElementById("new-category-name").value.trim();
       const imageFile = document.getElementById("new-category-image").files[0];
 
@@ -980,35 +900,36 @@ function initCategoriesTab() {
 
       const id = "cat_" + Date.now();
 
-      saveCategoryBtn.innerText = "جاري الحفظ...";
+      saveCategoryBtn.innerText = "جاري رفع الصورة...";
       saveCategoryBtn.disabled = true;
 
-      const handleSave = (imgUrl) => {
-        let categories = JSON.parse(localStorage.getItem("categories")) || [];
-
-        const newCat = { id, name, image: imgUrl };
-        categories.push(newCat);
-        try {
-          localStorage.setItem("categories", JSON.stringify(categories));
-          syncItemToFirestore("categories", newCat, "add");
-
-          document.getElementById("new-category-name").value = "";
-          document.getElementById("new-category-image").value = "";
-          addCategoryForm.style.display = "none";
-          addCategoryBtn.innerText = "إضافة فئة جديدة";
-
-          loadAdminCategories();
-        } catch (e) {
-          alert("المساحة ممتلئة! يرجى حذف بعض العناصر.");
-        }
-        saveCategoryBtn.innerText = "حفظ الفئة";
-        saveCategoryBtn.disabled = false;
-      };
+      let imgUrl = "https://cdn-icons-png.flaticon.com/512/149/149852.png"; // صورة افتراضية
 
       if (imageFile) {
-        compressImageFile(imageFile, handleSave);
-      } else {
-        handleSave("https://cdn-icons-png.flaticon.com/512/149/149852.png"); // صورة افتراضية
+        const uploaded = await uploadToBunnyNET(imageFile);
+        if(uploaded) imgUrl = uploaded;
+      }
+
+      try {
+        let categories = JSON.parse(localStorage.getItem("categories")) || [];
+        const newCat = { id, name, image: imgUrl };
+        categories.push(newCat);
+        
+        localStorage.setItem("categories", JSON.stringify(categories));
+        syncItemToFirestore("categories", newCat, "add");
+
+        document.getElementById("new-category-name").value = "";
+        document.getElementById("new-category-image").value = "";
+        addCategoryForm.style.display = "none";
+        addCategoryBtn.innerText = "إضافة فئة جديدة";
+
+        loadAdminCategories();
+      } catch (e) {
+        console.error(e);
+        alert("حدث خطأ أثناء حفظ الفئة.");
+      } finally {
+        saveCategoryBtn.innerText = "حفظ الفئة";
+        saveCategoryBtn.disabled = false;
       }
     });
   }
@@ -1022,10 +943,8 @@ function initCategoriesTab() {
 
   const updateBtn = document.getElementById("update-category-btn");
   if (updateBtn) {
-    updateBtn.addEventListener("click", () => {
-      const originalId = document.getElementById(
-        "edit-category-original-id",
-      ).value;
+    updateBtn.addEventListener("click", async () => {
+      const originalId = document.getElementById("edit-category-original-id").value;
       const name = document.getElementById("edit-category-name").value.trim();
       const imageFile = document.getElementById("edit-category-image").files[0];
 
@@ -1035,35 +954,29 @@ function initCategoriesTab() {
       }
 
       let categories = JSON.parse(localStorage.getItem("categories")) || [];
-
       const catIndex = categories.findIndex((c) => c.id === originalId);
       if (catIndex === -1) return;
 
       updateBtn.innerText = "جاري التحديث...";
       updateBtn.disabled = true;
 
-      const handleUpdate = (imgUrl) => {
-        categories[catIndex].name = name;
-        if (imgUrl) {
-          categories[catIndex].image = imgUrl;
-        }
-
-        try {
-          localStorage.setItem("categories", JSON.stringify(categories));
-          syncItemToFirestore("categories", categories[catIndex], "update");
-          document.getElementById("edit-category-form").style.display = "none";
-          loadAdminCategories();
-        } catch (e) {
-          alert("حدث خطأ أثناء الحفظ.");
-        }
-        updateBtn.innerText = "حفظ التعديلات";
-        updateBtn.disabled = false;
-      };
+      categories[catIndex].name = name;
 
       if (imageFile) {
-        compressImageFile(imageFile, handleUpdate);
-      } else {
-        handleUpdate(null);
+        const uploaded = await uploadToBunnyNET(imageFile);
+        if(uploaded) categories[catIndex].image = uploaded;
+      }
+
+      try {
+        localStorage.setItem("categories", JSON.stringify(categories));
+        syncItemToFirestore("categories", categories[catIndex], "update");
+        document.getElementById("edit-category-form").style.display = "none";
+        loadAdminCategories();
+      } catch (e) {
+        alert("حدث خطأ أثناء التحديث.");
+      } finally {
+        updateBtn.innerText = "حفظ التعديلات";
+        updateBtn.disabled = false;
       }
     });
   }
@@ -1078,12 +991,10 @@ function loadAdminCategories() {
   if (!container) return;
 
   let categories = JSON.parse(localStorage.getItem("categories")) || [];
-
   container.innerHTML = "";
 
   if (categories.length === 0) {
-    container.innerHTML =
-      '<div style="grid-column: 1 / -1; text-align: center; padding: 2rem;">لا توجد فئات حالياً.</div>';
+    container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 2rem;">لا توجد فئات حالياً.</div>';
     return;
   }
 
@@ -1121,15 +1032,13 @@ function loadAdminCategories() {
   deleteBtns.forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const id = e.currentTarget.getAttribute("data-id");
-      if (typeof window.deleteCategory === "function")
-        window.deleteCategory(id);
+      if (typeof window.deleteCategory === "function") window.deleteCategory(id);
     });
   });
 }
 
 window.editCategory = function (id) {
   let categories = JSON.parse(localStorage.getItem("categories")) || [];
-  
   const cat = categories.find((c) => c.id === id);
   if (!cat) return;
 
