@@ -1,0 +1,21 @@
+{
+  "name": "متجر ماي فون",
+  "short_name": "ماي فون",
+  "start_url": "/user/index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#378b8e",
+  "description": "متجر ماي فون لبيع المنتجات",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
