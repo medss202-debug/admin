@@ -270,9 +270,12 @@ function loadOrders() {
       const priceNum = parseInt(item.price.replace(/[^\d]/g, ""));
       subtotal += priceNum * item.quantity;
       itemsHtml += `
-            <div class="order-item">
-                <span>${item.name} (${item.quantity}x)</span>
-                <span>${(priceNum * item.quantity).toLocaleString("en-US")} د.ع</span>
+            <div class="order-item" style="display:flex; align-items:center; gap:10px;">
+                <img src="${item.image}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;">
+                <div style="flex:1; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${item.name} (${item.quantity}x)</span>
+                    <span>${(priceNum * item.quantity).toLocaleString("en-US")} د.ع</span>
+                </div>
             </div>`;
     });
     const total = subtotal + shippingFee;
@@ -322,6 +325,23 @@ window.processOrder = async function (id, action) {
 
   if (orderIndex !== -1) {
     const order = pendingOrders[orderIndex];
+
+    if (action === "accept") {
+      // خصم المخزون أولاً والمزامنة المباشرة
+      let products = JSON.parse(localStorage.getItem("products")) || [];
+      order.items.forEach(item => {
+          const pIndex = products.findIndex(p => p.id === item.id);
+          if (pIndex !== -1) {
+              let currentStock = parseInt(products[pIndex].stock) || 0;
+              currentStock -= item.quantity;
+              if (currentStock < 0) currentStock = 0;
+              products[pIndex].stock = currentStock;
+              syncItemToFirestore("products", products[pIndex], "update");
+          }
+      });
+      localStorage.setItem("products", JSON.stringify(products));
+      if (typeof loadAdminProducts === "function") loadAdminProducts();
+    }
 
     if (window.db && window.firestore && order.firestoreId) {
       try {
@@ -398,9 +418,12 @@ function loadAcceptedOrders() {
       const priceNum = parseInt(item.price.replace(/[^\d]/g, ""));
       subtotal += priceNum * item.quantity;
       itemsHtml += `
-            <div class="order-item">
-                <span>${item.name} (${item.quantity}x)</span>
-                <span>${(priceNum * item.quantity).toLocaleString("en-US")} د.ع</span>
+            <div class="order-item" style="display:flex; align-items:center; gap:10px;">
+                <img src="${item.image}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;">
+                <div style="flex:1; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${item.name} (${item.quantity}x)</span>
+                    <span>${(priceNum * item.quantity).toLocaleString("en-US")} د.ع</span>
+                </div>
             </div>`;
     });
     const total = subtotal + shippingFee;
@@ -512,11 +535,13 @@ function initProductsTab() {
       const name = document.getElementById("new-product-name").value;
       const price = document.getElementById("new-product-price").value;
       const category = document.getElementById("new-product-category").value;
+      const stock = document.getElementById("new-product-stock").value;
+      const desc = document.getElementById("new-product-desc").value;
       const imageInput = document.getElementById("new-product-image");
       const imageFile = imageInput.files[0];
 
-      if (!name || !price || !category || !imageFile) {
-        alert("يرجى ملء جميع الحقول واختيار صورة!");
+      if (!name || !price || !category || !imageFile || !stock) {
+        alert("يرجى ملء جميع الحقول الأساسية واختيار صورة!");
         return;
       }
 
@@ -546,6 +571,8 @@ function initProductsTab() {
           image: uploadedImageUrl,
           rating: 5,
           category: category,
+          stock: parseInt(stock),
+          description: desc
         };
 
         products.push(newProduct);
@@ -554,6 +581,8 @@ function initProductsTab() {
 
         document.getElementById("new-product-name").value = "";
         document.getElementById("new-product-price").value = "";
+        document.getElementById("new-product-stock").value = "";
+        document.getElementById("new-product-desc").value = "";
         document.getElementById("new-product-image").value = "";
         formContainer.style.display = "none";
         addProductBtn.innerText = "إضافة منتج جديد";
@@ -592,10 +621,12 @@ function loadAdminProducts() {
         const name = document.getElementById("edit-product-name").value;
         const price = document.getElementById("edit-product-price").value;
         const category = document.getElementById("edit-product-category").value;
+        const stock = document.getElementById("edit-product-stock").value;
+        const desc = document.getElementById("edit-product-desc").value;
         const imageInput = document.getElementById("edit-product-image");
         const imageFile = imageInput.files[0];
 
-        if (!name || !price || !category) {
+        if (!name || !price || !category || !stock) {
           alert("يرجى ملء كافة الحقول الأساسية!");
           return;
         }
@@ -608,6 +639,8 @@ function loadAdminProducts() {
           products[index].name = name;
           products[index].price = formattedPrice;
           products[index].category = category;
+          products[index].stock = parseInt(stock);
+          products[index].description = desc;
 
           if (imageFile) {
             updateBtn.innerText = "جاري رفع الصورة وتحديث المنتج...";
@@ -651,6 +684,7 @@ function loadAdminProducts() {
   }
 
   products.forEach((product) => {
+    const stockVal = product.stock !== undefined ? product.stock : "غير محدد";
     const card = document.createElement("div");
     card.className = "order-card";
     card.innerHTML = `
@@ -659,7 +693,7 @@ function loadAdminProducts() {
                 <div>
                     <h4 style="color: var(--primary); margin-bottom: 0.25rem;">${product.name}</h4>
                     <div style="color: var(--text-main); font-weight: 600;">${product.price}</div>
-                    <div style="color: var(--text-muted); font-size: 0.85rem; margin-top:0.25rem;">الفئة: ${getCategoryName(product.category)}</div>
+                    <div style="color: var(--text-muted); font-size: 0.85rem; margin-top:0.25rem;">الفئة: ${getCategoryName(product.category)} | المخزون: ${stockVal}</div>
                 </div>
             </div>
             <div class="order-actions" style="margin-top: auto;">
@@ -718,6 +752,8 @@ window.editProduct = function (id) {
   const priceNum = product.price.replace(/[^\d]/g, "");
   document.getElementById("edit-product-price").value = priceNum;
   document.getElementById("edit-product-category").value = product.category;
+  document.getElementById("edit-product-stock").value = product.stock !== undefined ? product.stock : 0;
+  document.getElementById("edit-product-desc").value = product.description || "";
   document.getElementById("edit-product-image").value = "";
 
   document.getElementById("edit-product-form").style.display = "block";
